@@ -1,0 +1,27 @@
+{
+	"name": "trg_adls_file_arrival",
+	"properties": {
+		"annotations": [],
+		"runtimeState": "Started",
+		"pipelines": [
+			{
+				"pipelineReference": {
+					"referenceName": "pl_master_orchestration",
+					"type": "PipelineReference"
+				},
+				"parameters": {
+					"TargetSourceType": "ADLS"
+				}
+			}
+		],
+		"type": "BlobEventsTrigger",
+		"typeProperties": {
+			"blobPathBeginsWith": "/inbound/blobs/",
+			"ignoreEmptyBlobs": true,
+			"scope": "/subscriptions/a2d94a1d-83c8-433a-9fa1-0bb1e8a4a190/resourceGroups/rg-adf-practice/providers/Microsoft.Storage/storageAccounts/storagedatafa",
+			"events": [
+				"Microsoft.Storage.BlobCreated"
+			]
+		}
+	}
+}

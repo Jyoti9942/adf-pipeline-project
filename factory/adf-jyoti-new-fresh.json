@@ -1,0 +1,15 @@
+{
+	"name": "adf-jyoti-new-fresh",
+	"properties": {
+		"trustModeClaimForMi": {
+			"value": "Disabled",
+			"editable": true
+		}
+	},
+	"location": "indiasouthcentral",
+	"identity": {
+		"type": "SystemAssigned",
+		"principalId": "c03545b2-aa20-4bc0-bd4f-39049137ef70",
+		"tenantId": "ef9703dd-6fbe-44e8-9630-cbc9c0429782"
+	}
+}

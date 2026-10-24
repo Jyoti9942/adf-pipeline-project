@@ -1,0 +1,13 @@
+{
+	"name": "ds_FrameworkMetadata",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "ls_ADF_Framework_DB",
+			"type": "LinkedServiceReference"
+		},
+		"annotations": [],
+		"type": "AzureSqlTable",
+		"schema": []
+	},
+	"type": "Microsoft.DataFactory/factories/datasets"
+}

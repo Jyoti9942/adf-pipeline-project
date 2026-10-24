@@ -1,0 +1,19 @@
+{
+	"name": "ds_Generic_REST_Source",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "ls_Rest_Api",
+			"type": "LinkedServiceReference",
+			"parameters": {
+				"RelativeURL": {
+					"value": "@pipeline().parameters.SourceQuery",
+					"type": "Expression"
+				}
+			}
+		},
+		"annotations": [],
+		"type": "RestResource",
+		"schema": []
+	},
+	"type": "Microsoft.DataFactory/factories/datasets"
+}

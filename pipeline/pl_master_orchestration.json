@@ -1,0 +1,374 @@
+{
+	"name": "pl_master_orchestration",
+	"properties": {
+		"activities": [
+			{
+				"name": "lkp_FetchActiveMetadata",
+				"type": "Lookup",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "AzureSqlSource",
+						"sqlReaderQuery": {
+							"value": "SELECT * \nFROM dbo.FrameworkMetadata\nWHERE IsActive = 1\n  AND ('@{pipeline().parameters.TargetSourceType}' = 'ALL' \n       OR SourceType = '@{pipeline().parameters.TargetSourceType}')\nORDER BY ExecutionOrder ASC;",
+							"type": "Expression"
+						},
+						"queryTimeout": "02:00:00",
+						"partitionOption": "None"
+					},
+					"dataset": {
+						"referenceName": "ds_FrameworkMetadata",
+						"type": "DatasetReference"
+					},
+					"firstRowOnly": false
+				}
+			},
+			{
+				"name": "forEach_Process",
+				"type": "ForEach",
+				"dependsOn": [
+					{
+						"activity": "lkp_FetchActiveMetadata",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"items": {
+						"value": "@activity('lkp_FetchActiveMetadata').output.value",
+						"type": "Expression"
+					},
+					"isSequential": true,
+					"activities": [
+						{
+							"name": "script_LogProcessStart",
+							"type": "Script",
+							"dependsOn": [],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"linkedServiceName": {
+								"referenceName": "ls_ADF_Framework_DB",
+								"type": "LinkedServiceReference"
+							},
+							"typeProperties": {
+								"scripts": [
+									{
+										"type": "Query",
+										"text": {
+											"value": "INSERT INTO dbo.ProcessLog (\n    ProcessId, \n    PipelineRunId, \n    ProcessStep, \n    ProcessStatus, \n    ProcessRunStart,\n    CreatedDate\n)\nVALUES (\n    @{item().ProcessId}, \n    '@{pipeline().RunId}', \n    'Pipeline Execution Started', \n    'Started', \n    GETDATE(),\n    GETDATE()\n);",
+											"type": "Expression"
+										}
+									}
+								],
+								"scriptBlockExecutionTimeout": "02:00:00"
+							}
+						},
+						{
+							"name": "Lkp_CheckDependency",
+							"type": "Lookup",
+							"dependsOn": [
+								{
+									"activity": "script_LogProcessStart",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"source": {
+									"type": "AzureSqlSource",
+									"sqlReaderQuery": {
+										"value": "SELECT TOP 1 ProcessStatus AS Status \nFROM dbo.ProcessLog \nWHERE ProcessId = ISNULL(NULLIF('@{item().DependencyProcessId}', ''), 0)\nORDER BY LogId DESC;",
+										"type": "Expression"
+									},
+									"queryTimeout": "02:00:00",
+									"partitionOption": "None"
+								},
+								"dataset": {
+									"referenceName": "ds_FrameworkMetadata",
+									"type": "DatasetReference"
+								}
+							}
+						},
+						{
+							"name": "If Condition1",
+							"type": "IfCondition",
+							"dependsOn": [
+								{
+									"activity": "Lkp_CheckDependency",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"userProperties": [],
+							"typeProperties": {
+								"expression": {
+									"value": "@or(equals(item().DependencyProcessId, json('null')), equals(activity('Lkp_CheckDependency').output.firstRow.Status, 'Success'))",
+									"type": "Expression"
+								},
+								"ifFalseActivities": [
+									{
+										"name": "Script_LogSkippedStatus",
+										"type": "Script",
+										"dependsOn": [],
+										"policy": {
+											"timeout": "0.12:00:00",
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"linkedServiceName": {
+											"referenceName": "ls_ADF_Framework_DB",
+											"type": "LinkedServiceReference"
+										},
+										"typeProperties": {
+											"scripts": [
+												{
+													"type": "Query",
+													"text": {
+														"value": "INSERT INTO dbo.ProcessLog (\n    ProcessId, \n    PipelineRunId, \n    ProcessStep, \n    ProcessStatus, \n    ErrorMessage,\n    ProcessRunStart,\n    CreatedDate\n)\nVALUES (\n    @{item().ProcessId}, \n    '@{pipeline().RunId}', \n    'Process Skipped', \n    'Skipped', \n    'Parent process (ID: @{item().DependencyProcessId}) failed or did not execute.', \n    GETDATE(),\n    GETDATE()\n);",
+														"type": "Expression"
+													}
+												}
+											],
+											"scriptBlockExecutionTimeout": "02:00:00"
+										}
+									}
+								],
+								"ifTrueActivities": [
+									{
+										"name": "Exec_ChildPipeline",
+										"type": "ExecutePipeline",
+										"dependsOn": [],
+										"policy": {
+											"secureInput": false
+										},
+										"userProperties": [],
+										"typeProperties": {
+											"pipeline": {
+												"referenceName": "pl_child_ingest_to_adls",
+												"type": "PipelineReference"
+											},
+											"waitOnCompletion": true,
+											"parameters": {
+												"ProcessId": {
+													"value": "@item().ProcessId",
+													"type": "Expression"
+												},
+												"SourceType": {
+													"value": "@item().SourceType",
+													"type": "Expression"
+												},
+												"SourceSchema": {
+													"value": "@item().SourceSchema",
+													"type": "Expression"
+												},
+												"SourceObject": {
+													"value": "@item().SourceObject",
+													"type": "Expression"
+												},
+												"SourceQuery": {
+													"value": "@item().SourceQuery",
+													"type": "Expression"
+												},
+												"SourceFolder": {
+													"value": "@item().SourceFolder",
+													"type": "Expression"
+												},
+												"SourceFileName": {
+													"value": "@item().SourceFileName",
+													"type": "Expression"
+												},
+												"SourceFileFormat": {
+													"value": "@item().SourceFileFormat",
+													"type": "Expression"
+												},
+												"TargetFolder": {
+													"value": "@item().TargetFolder",
+													"type": "Expression"
+												},
+												"LoadType": {
+													"value": "@{item().LoadType}",
+													"type": "Expression"
+												},
+												"WatermarkColumn": {
+													"value": "@{item().WatermarkColumn}",
+													"type": "Expression"
+												},
+												"LastWatermarkValue": {
+													"value": "@{item().LastWatermarkValue}",
+													"type": "Expression"
+												}
+											}
+										}
+									},
+									{
+										"name": "script_LogADLSLandingSuccess",
+										"type": "Script",
+										"dependsOn": [
+											{
+												"activity": "Exec_ChildPipeline",
+												"dependencyConditions": [
+													"Succeeded"
+												]
+											}
+										],
+										"policy": {
+											"timeout": "0.12:00:00",
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"linkedServiceName": {
+											"referenceName": "ls_ADF_Framework_DB",
+											"type": "LinkedServiceReference"
+										},
+										"typeProperties": {
+											"scripts": [
+												{
+													"type": "Query",
+													"text": {
+														"value": "INSERT INTO dbo.ProcessLog (\n    ProcessId, \n    PipelineRunId, \n    ProcessStep, \n    ProcessStatus, \n    RecordCountProcessed, \n    ProcessRunStart, \n    CreatedDate\n)\nVALUES (\n    @{item().ProcessId}, \n    '@{pipeline().RunId}', \n    'ADLS Landing – Success', \n    'Success', \n    0, \n    GETDATE(), \n    GETDATE()\n);",
+														"type": "Expression"
+													}
+												}
+											],
+											"scriptBlockExecutionTimeout": "02:00:00"
+										}
+									},
+									{
+										"name": "script_LogValidationSuccess",
+										"type": "Script",
+										"dependsOn": [
+											{
+												"activity": "script_LogADLSLandingSuccess",
+												"dependencyConditions": [
+													"Succeeded"
+												]
+											}
+										],
+										"policy": {
+											"timeout": "0.12:00:00",
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"linkedServiceName": {
+											"referenceName": "ls_ADF_Framework_DB",
+											"type": "LinkedServiceReference"
+										},
+										"typeProperties": {
+											"scripts": [
+												{
+													"type": "Query",
+													"text": {
+														"value": "INSERT INTO dbo.ProcessLog (\n    ProcessId, \n    PipelineRunId, \n    ProcessStep, \n    ProcessStatus, \n    RecordCountProcessed, \n    ProcessRunStart, \n    CreatedDate\n)\nVALUES (\n    @{item().ProcessId}, \n    '@{pipeline().RunId}', \n    'ADLS Landing – Success', \n    'Success', \n    0, \n    GETDATE(), \n    GETDATE()\n);",
+														"type": "Expression"
+													}
+												}
+											],
+											"scriptBlockExecutionTimeout": "02:00:00"
+										}
+									},
+									{
+										"name": "script_LogValidationFailed",
+										"type": "Script",
+										"dependsOn": [
+											{
+												"activity": "script_LogValidationSuccess",
+												"dependencyConditions": [
+													"Failed"
+												]
+											}
+										],
+										"policy": {
+											"timeout": "0.12:00:00",
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"linkedServiceName": {
+											"referenceName": "ls_ADF_Framework_DB",
+											"type": "LinkedServiceReference"
+										},
+										"typeProperties": {
+											"scripts": [
+												{
+													"type": "Query",
+													"text": {
+														"value": "INSERT INTO dbo.ProcessLog (\n    ProcessId, PipelineRunId, ProcessStep, ProcessStatus, ErrorMessage, ProcessRunStart, CreatedDate\n)\nVALUES (\n    @{item().ProcessId}, \n    '@{pipeline().RunId}', \n    'Validation – Failed', \n    'Failed', \n    'Source to ADLS Landing or record validation failed.', \n    GETDATE(), \n    GETDATE()\n);",
+														"type": "Expression"
+													}
+												}
+											],
+											"scriptBlockExecutionTimeout": "02:00:00"
+										}
+									},
+									{
+										"name": "Fail",
+										"type": "Fail",
+										"dependsOn": [
+											{
+												"activity": "script_LogValidationFailed",
+												"dependencyConditions": [
+													"Succeeded"
+												]
+											}
+										],
+										"userProperties": [],
+										"typeProperties": {
+											"message": "Validation Failed: ADLS extraction mismatch or error.",
+											"errorCode": "400"
+										}
+									}
+								]
+							}
+						}
+					]
+				}
+			}
+		],
+		"parameters": {
+			"TargetSourceType": {
+				"type": "string",
+				"defaultValue": "ALL"
+			}
+		},
+		"annotations": [],
+		"lastPublishTime": "2026-09-12T18:55:24Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}
